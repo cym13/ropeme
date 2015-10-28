@@ -69,7 +69,7 @@ Exercise 7
 Display the address of the dynamically linked `puts` libc function.
 
 WW91IG1heSB3YW50IHRvIHJlYWQgYWJvdXQgdGhlIFBMVCBhbmQgdGhlIEdPVCBpZiB0aGVzZSBj
-b25jZXB0cyBhcmVuJ3QKY3Jpc3RhbCBjbGVhcjoKaHR0cHM6Ly93d3cudGVjaG5vdmVsdHkub3Jn
+b25jZXB0cyBhcmVuJ3QgY3Jpc3RhbCBjbGVhcjoKaHR0cHM6Ly93d3cudGVjaG5vdmVsdHkub3Jn
 L2xpbnV4L3BsdC1hbmQtZ290LXRoZS1rZXktdG8tY29kZS1zaGFyaW5nLWFuZC1keW5hbWljLWxp
 YnJhcmllcy5odG1sCg==
 
@@ -85,4 +85,4 @@ Exercise 9
 
 Get a shell by combining what has been done.
 
-bWFuIDMgc3lzdGVtIDpwCg==
+bWFuIDMgc3lzdGVtIDpwCg=
