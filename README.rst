@@ -10,3 +10,6 @@ recompile it with different options you can modify thoses in the Makefile.
 
 The exercises are naturally in `exercises.rst' while `writeup.rst' contains
 a detailed solution to the problems.
+
+This is meant to be used with linux. If you don't know what to use, you may
+want to check up on the radare2 toolset.
