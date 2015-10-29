@@ -1,5 +1,5 @@
 NAME    := ropeme
-CC_OPTS := -m32 -o $(NAME)
+CC_OPTS := -m32 -std=c99 -o $(NAME)
 
 all: $(NAME)
 
