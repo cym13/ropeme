@@ -86,3 +86,12 @@ Exercise 9
 Get a shell by combining what has been done.
 
 bWFuIDMgc3lzdGVtIDpwCg=
+
+Exercise 10
+===========
+
+If you have gotten this far beating the ropasaurus rex should be a piece of
+cake! The binary and corresponding libc can be found at the following address:
+
+http://shell-storm.org/repo/CTF/PlaidCTF-2013/Pwnable/ropasaurusrex-200/
+
