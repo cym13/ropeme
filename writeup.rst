@@ -411,6 +411,7 @@ of the other call to read. The solution is to completely fill it and put our
 input just after:
 
 ::
+
     ^ [padding       ] = 'B' x 388
     | [string address] = 0x08049712
     | [end    address] = 0x080485e1
